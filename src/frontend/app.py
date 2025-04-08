@@ -1,6 +1,8 @@
 import streamlit as st
 import boto3
 import uuid
+import io
+from mutagen.mp3 import MP3
 
 
 def upload_files_tab():
@@ -13,6 +15,15 @@ def upload_files_tab():
     if uploaded_file is not None:
         st.info(f"Selected file: **{uploaded_file.name}**")
         unique_file_name = f"{uuid.uuid4()}.mp3"
+
+        try:
+            audio = MP3(io.BytesIO(uploaded_file.read()))
+            duration = audio.info.length
+            bitrate = audio.info.bitrate / 1000
+            st.markdown(f"**Duration:** {duration:.2f} seconds")
+            st.markdown(f"**Bitrate:** {bitrate:.0f} kbps")
+        except Exception as e:
+            st.warning("Could not read MP3 metadata.")
 
         if st.button("Simulate Upload"):
             # Placeholder action instead of actual AWS S3 upload
