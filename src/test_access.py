@@ -14,13 +14,15 @@ AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION')
 S3_LANDING_BUCKET = os.getenv('S3_LANDING_BUCKET')
+AWS_SESSION_TOKEN = os.getenv('AWS_SESSION_TOKEN')
 
 # Create an S3 client using the credentials and region from the env file
 s3_client = boto3.client(
     's3',
     region_name=AWS_DEFAULT_REGION,
     aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    aws_session_token=AWS_SESSION_TOKEN
 )
 
 
