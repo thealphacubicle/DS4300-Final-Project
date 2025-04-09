@@ -1,10 +1,6 @@
 import os
 import boto3
-import random
-import string
 from dotenv import load_dotenv
-import uuid
-
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,21 +21,6 @@ s3_client = boto3.client(
     aws_session_token=AWS_SESSION_TOKEN
 )
 
-
-def create_random_file(filename, size=100):
-    """
-    Create a file with random letters and digits, appending a UUID for uniqueness.
-    :param filename: Base name of the file to create.
-    :param size: Number of random characters to write to the file.
-    """
-    unique_filename = f"{filename}_{uuid.uuid4()}"
-    random_text = ''.join(random.choices(string.ascii_letters + string.digits, k=size))
-    with open(unique_filename, 'w') as file:
-        file.write(random_text)
-    print(f"Random file '{unique_filename}' created with {size} characters.")
-    return unique_filename
-
-
 def upload_file_to_s3(file_name, bucket, object_name=None):
     """
     Uploads a file to an S3 bucket.
@@ -47,6 +28,7 @@ def upload_file_to_s3(file_name, bucket, object_name=None):
     :param file_name: The file to upload.
     :param bucket: The bucket to upload to.
     :param object_name: S3 object name. If not specified then file_name is used.
+    :return: True if file was uploaded, else False.
     """
     if object_name is None:
         object_name = file_name
@@ -54,16 +36,22 @@ def upload_file_to_s3(file_name, bucket, object_name=None):
     try:
         s3_client.upload_file(file_name, bucket, object_name)
         print(f"Successfully uploaded '{file_name}' to bucket '{bucket}' as '{object_name}'")
+        return True
     except Exception as e:
         print(f"Error uploading file: {e}")
-
+        return False
 
 if __name__ == '__main__':
-    # Define the base file name
-    base_file_name = "random_file.txt"
+    # Define the folder containing the files to upload
+    folder_path = input("Enter the folder path containing files to upload: ")
 
-    # Create a random file locally with a unique name
-    unique_file_name = create_random_file(base_file_name, size=100)
-
-    # Upload the file to the S3 landing bucket specified in .env
-    upload_file_to_s3(unique_file_name, S3_LANDING_BUCKET)
+    # Ensure the folder exists
+    if not os.path.exists(folder_path):
+        print(f"Folder '{folder_path}' does not exist.")
+    else:
+        # Iterate through all files in the folder
+        for file_name in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, file_name)
+            if os.path.isfile(file_path):  # Ensure it's a file
+                # Upload the file to the S3 landing bucket specified in .env
+                upload_file_to_s3(file_path, S3_LANDING_BUCKET, file_name)
