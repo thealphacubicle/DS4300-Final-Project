@@ -1,57 +1,78 @@
-import os
+import json
 import boto3
-from dotenv import load_dotenv
+import os
+import uuid
 
-# Load environment variables from .env file
-load_dotenv()
+# Initialize the AWS service clients
+transcribe_client = boto3.client('transcribe')
+sns_client = boto3.client('sns')
 
-# Retrieve environment variables
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION')
-S3_LANDING_BUCKET = os.getenv('S3_LANDING_BUCKET')
-AWS_SESSION_TOKEN = os.getenv('AWS_SESSION_TOKEN')
 
-# Create an S3 client using the credentials and region from the env file
-s3_client = boto3.client(
-    's3',
-    region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    aws_session_token=AWS_SESSION_TOKEN
-)
-
-def upload_file_to_s3(file_name, bucket, object_name=None):
+def lambda_handler(event, context):
     """
-    Uploads a file to an S3 bucket.
-
-    :param file_name: The file to upload.
-    :param bucket: The bucket to upload to.
-    :param object_name: S3 object name. If not specified then file_name is used.
-    :return: True if file was uploaded, else False.
+    Lambda function triggered by an S3 event that starts an AWS Transcribe job,
+    then publishes a notification to an SNS topic with metadata about the job.
     """
-    if object_name is None:
-        object_name = file_name
-
     try:
-        s3_client.upload_file(file_name, bucket, object_name)
-        print(f"Successfully uploaded '{file_name}' to bucket '{bucket}' as '{object_name}'")
-        return True
+        # Extract S3 bucket and object key (assumes one record per event)
+        record = event['Records'][0]
+        bucket = record['s3']['bucket']['name']
+        object_key = record['s3']['object']['key']
+
+        # Construct the S3 URI for the media file
+        media_uri = f"s3://{bucket}/{object_key}"
+
+        # Generate a unique transcription job name
+        job_name = f"TranscriptionJob-{uuid.uuid4()}"
+        file_type = object_key.split(".")[-1].lower()
+
+        # Determine media format and start the transcription job; supports only MP3 and WAV files.
+        if file_type == "mp3":
+            response = transcribe_client.start_transcription_job(
+                TranscriptionJobName=job_name,
+                Media={'MediaFileUri': media_uri},
+                MediaFormat="mp3",
+                LanguageCode=os.getenv("TRANSCRIBE_LANGUAGE_CODE", "en-US")
+            )
+        elif file_type == "wav":
+            response = transcribe_client.start_transcription_job(
+                TranscriptionJobName=job_name,
+                Media={'MediaFileUri': media_uri},
+                MediaFormat="wav",
+                LanguageCode=os.getenv("TRANSCRIBE_LANGUAGE_CODE", "en-US")
+            )
+        else:
+            # Log and raise an error if the file type is not supported.
+            error_message = f"Unsupported file type: {file_type}. Pipeline only supports MP3 and WAV files!"
+            print(error_message)
+            raise ValueError(error_message)
+
+        # Construct the payload with transcription job metadata for downstream processing
+        result = {
+            "audio_file_name": object_key,
+            "audio_file_type": file_type,
+            "source_link": media_uri,
+            "transcription_job_name": response['TranscriptionJob']['TranscriptionJobName']
+        }
+
+        # Publish the payload to the SNS topic if SNS_TOPIC_ARN is set
+        sns_topic_arn = os.getenv("SNS_TOPIC_ARN")
+        if sns_topic_arn:
+            sns_response = sns_client.publish(
+                TopicArn=sns_topic_arn,
+                Message=json.dumps(result),
+                Subject="Transcription Job Started"
+            )
+            print(f"Published to SNS. Response: {sns_response}")
+        else:
+            print("SNS_TOPIC_ARN is not set in environment variables. Skipping SNS publish.")
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps(result)
+        }
+
     except Exception as e:
-        print(f"Error uploading file: {e}")
-        return False
-
-if __name__ == '__main__':
-    # Define the folder containing the files to upload
-    folder_path = input("Enter the folder path containing files to upload: ")
-
-    # Ensure the folder exists
-    if not os.path.exists(folder_path):
-        print(f"Folder '{folder_path}' does not exist.")
-    else:
-        # Iterate through all files in the folder
-        for file_name in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, file_name)
-            if os.path.isfile(file_path):  # Ensure it's a file
-                # Upload the file to the S3 landing bucket specified in .env
-                upload_file_to_s3(file_path, S3_LANDING_BUCKET, file_name)
+        # Log the error and re-raise for Lambda error reporting/monitoring
+        print("Error starting transcription job:", str(e))
+        raise e
