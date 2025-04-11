@@ -5,6 +5,8 @@ import io
 from mutagen import File
 import os
 from dotenv import load_dotenv
+import pandas as pd
+from sqlalchemy import create_engine
 
 load_dotenv()
 
@@ -34,7 +36,7 @@ def upload_files_tab():
             st.warning("Could not read audio metadata.")
             st.error(str(e))
 
-        BUCKET_NAME = "sample-upload-bucket-neu01"
+        BUCKET_NAME = os.environ["S3_LANDING_BUCKET"]
 
         if st.button("Upload to S3"):
             try:
@@ -57,10 +59,70 @@ def upload_files_tab():
 
 
 def dashboard_tab():
-    st.header("Analytics Dashboard")
+    st.title("Analytics Dashboard")
     st.markdown(
-        "This is a placeholder for the analytics dashboard. Once integrated, you can display charts, metrics, and other insights here.")
-    st.info("Dashboard functionality coming soon...")
+        """
+        Welcome to your Analytics Dashboard! Explore insights from your transcription data through interactive charts.
+        The visualizations below highlight trends in sentiment over time, the distribution of sentiment scores, the breakdown
+        by file type, and how transcription length might relate to sentiment.
+        """
+    )
+
+    # Retrieve AWS RDS MySQL credentials from environment variables
+    RDS_USER = os.environ["RDS_USER"]
+    RDS_PASSWORD = os.environ["RDS_PASSWORD"]
+    RDS_HOST = os.environ["RDS_HOST"]
+    RDS_PORT = int(os.environ["RDS_PORT"])
+    RDS_DB = os.environ["RDS_DB"]
+
+    # Create a SQLAlchemy engine using the PyMySQL driver
+    connection_uri = f"mysql+pymysql://{RDS_USER}:{RDS_PASSWORD}@{RDS_HOST}:{RDS_PORT}/{RDS_DB}"
+    engine = create_engine(connection_uri)
+
+    # SQL query using fully qualified table name and backticks for identifiers
+    query = """
+        SELECT 
+            `id`,
+            `audio_file_name`,
+            `file_type`,
+            `transcription_text`,
+            `transcription_sentiment_score`,
+            `created_at`
+        FROM `speech_processing_db`.`transcriptions`
+        ORDER BY `created_at`
+    """
+
+    try:
+        # Retrieve the data into a DataFrame
+        df = pd.read_sql(query, engine)
+        st.success("Data pulled successfully from RDS!")
+        st.write("Number of rows returned:", len(df))
+
+        if not df.empty:
+            # Preprocessing
+            df["created_at"] = pd.to_datetime(df["created_at"])
+            # Create a new column recording the length of each transcription
+            df["transcription_length"] = df["transcription_text"].apply(lambda x: len(x) if isinstance(x, str) else 0)
+
+            # 1. Sentiment Score Distribution
+            st.subheader("Sentiment Score Distribution Over Time")
+
+            # 2. Distribution of Sentiment Scores
+            st.subheader("Distribution of Sentiment Scores")
+
+
+            # 3. Record Count by File Type
+            st.subheader("Record Count by File Type")
+
+
+            # 4. Transcription Length vs. Sentiment Score
+            st.subheader("Transcription Length vs. Sentiment Score")
+
+        else:
+            st.info("No data to display.")
+    except Exception as e:
+        st.error("Failed to retrieve data from RDS.")
+        st.error(str(e))
 
 
 def main():
