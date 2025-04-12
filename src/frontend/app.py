@@ -51,7 +51,6 @@ def upload_files_tab():
                 s3.upload_fileobj(io.BytesIO(file_bytes), BUCKET_NAME, unique_file_name)
 
                 st.success("File uploaded to S3 successfully!")
-                st.markdown(f"**S3 Path:** `s3://{BUCKET_NAME}/{unique_file_name}`")
 
             except Exception as e:
                 st.error("Upload to S3 failed.")
