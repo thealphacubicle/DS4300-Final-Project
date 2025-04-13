@@ -7,6 +7,8 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 from sqlalchemy import create_engine
+import plotly.express as px
+
 
 load_dotenv()
 
@@ -16,29 +18,31 @@ AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION")
 
 def upload_files_tab():
-    st.header("Upload MP3 or WAV File")
-    st.markdown("Upload your MP3 or WAV file to start the processing pipeline (now with AWS S3 integration).")
+    uploaded_files = st.file_uploader("Choose MP3 or WAV files", type=["mp3", "wav"], accept_multiple_files=True)
 
-    uploaded_file = st.file_uploader("Choose an MP3 or WAV file", type=["mp3", "wav"])
+    if uploaded_files:
+        file_metadata = []
 
-    if uploaded_file is not None:
-        st.info(f"Selected file: **{uploaded_file.name}**")
-        unique_file_name = f"{uuid.uuid4()}_{uploaded_file.name}"
-        file_bytes = uploaded_file.read()
+        for uploaded_file in uploaded_files:
+            st.info(f"Selected file: **{uploaded_file.name}**")
+            unique_file_name = f"{uuid.uuid4()}_{uploaded_file.name}"
+            file_bytes = uploaded_file.read()
 
-        try:
-            audio = File(io.BytesIO(file_bytes))
-            duration = audio.info.length
-            bitrate = audio.info.bitrate / 1000
-            st.markdown(f"**Duration:** {duration:.2f} seconds")
-            st.markdown(f"**Bitrate:** {bitrate:.0f} kbps")
-        except Exception as e:
-            st.warning("Could not read audio metadata.")
-            st.error(str(e))
+            try:
+                audio = File(io.BytesIO(file_bytes))
+                duration = audio.info.length
+                bitrate = audio.info.bitrate / 1000
+                st.markdown(f"**Duration:** {duration:.2f} seconds")
+                st.markdown(f"**Bitrate:** {bitrate:.0f} kbps")
+                file_metadata.append((unique_file_name, file_bytes))
+            except Exception as e:
+                st.warning(f"Could not read audio metadata for file: {uploaded_file.name}")
+                st.error(str(e))
+                continue
 
         BUCKET_NAME = os.environ["S3_LANDING_BUCKET"]
 
-        if st.button("Upload to S3"):
+        if st.button("Upload all files to S3"):
             try:
                 s3 = boto3.client(
                     "s3",
@@ -48,14 +52,13 @@ def upload_files_tab():
                     region_name=os.getenv("AWS_DEFAULT_REGION")
                 )
 
-                s3.upload_fileobj(io.BytesIO(file_bytes), BUCKET_NAME, unique_file_name)
+                for unique_file_name, file_bytes in file_metadata:
+                    s3.upload_fileobj(io.BytesIO(file_bytes), BUCKET_NAME, unique_file_name)
 
-                st.success("File uploaded to S3 successfully!")
-
+                st.success("All files uploaded to S3 successfully!")
             except Exception as e:
-                st.error("Upload to S3 failed.")
+                st.error("Upload to S3 failed for one or more files.")
                 st.error(str(e))
-
 
 def dashboard_tab():
     st.title("Analytics Dashboard")
@@ -95,34 +98,65 @@ def dashboard_tab():
         # Retrieve the data into a DataFrame
         df = pd.read_sql(query, engine)
         st.success("Data pulled successfully from RDS!")
-        st.write("Number of rows returned:", len(df))
 
         if not df.empty:
-            # Preprocessing
+            # Preprocessing steps
             df["created_at"] = pd.to_datetime(df["created_at"])
-            # Create a new column recording the length of each transcription
+
+            # Create a new column for transcription length
             df["transcription_length"] = df["transcription_text"].apply(lambda x: len(x) if isinstance(x, str) else 0)
 
-            # 1. Sentiment Score Distribution
-            st.subheader("Sentiment Score Distribution Over Time")
+            # Display key metrics in a row
+            col1, col2 = st.columns(2)
 
-            # 2. Distribution of Sentiment Scores
-            st.subheader("Distribution of Sentiment Scores")
+            with col1:
+                st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+                st.metric("Total Records", len(df))
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col2:
+                st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+                st.metric("Unique File Types", df["file_type"].nunique())
+                st.markdown("</div>", unsafe_allow_html=True)
 
 
-            # 3. Record Count by File Type
-            st.subheader("Record Count by File Type")
+            # Existing visualizations
+            # KDE plot for sentiment scores over time
+            fig_kde_sentiment = px.density_contour(
+                df,
+                x="created_at",
+                y="transcription_sentiment_score",
+                title="KDE Plot of Sentiment Scores Over Time",
+                labels={"created_at": "Created At", "transcription_sentiment_score": "Sentiment Score"}
+            )
+            fig_kde_sentiment.update_traces(contours_coloring="fill", showlegend=True)
+            st.plotly_chart(fig_kde_sentiment, use_container_width=True)
 
+            # --- New Box Plots Section ---
+            st.markdown("## Box Plots")
 
-            # 4. Transcription Length vs. Sentiment Score
-            st.subheader("Transcription Length vs. Sentiment Score")
+            # Box plot for the distribution of sentiment scores
+            fig_sentiment = px.box(
+                df,
+                x="transcription_sentiment_score",
+                title="Distribution of Sentiment Scores",
+                labels={"transcription_sentiment_score": "Sentiment Score"}
+            )
+            st.plotly_chart(fig_sentiment, use_container_width=True)
+
+            # Box plot for the distribution of transcription lengths
+            fig_length = px.box(
+                df,
+                x="transcription_length",
+                title="Distribution of Transcription Lengths"
+            )
+            st.plotly_chart(fig_length, use_container_width=True)
 
         else:
             st.info("No data to display.")
     except Exception as e:
         st.error("Failed to retrieve data from RDS.")
         st.error(str(e))
-
 
 def main():
     st.set_page_config(page_title="Audio Processing Pipeline", layout="wide")
